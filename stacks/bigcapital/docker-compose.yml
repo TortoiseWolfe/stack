@@ -124,6 +124,7 @@ services:
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID not set}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY not set}
+      HOSTED_ON_BIGCAPITAL_CLOUD: false
     networks:
       - traefik_net
       - bigcapital_internal
