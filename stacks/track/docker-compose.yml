@@ -1,0 +1,63 @@
+version: "3.8"
+
+services:
+  track:
+    image: strangewill/track:latest
+    networks:
+      - traefik_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - track-data:/app/data
+    environment:
+      ConnectionStrings__Default: "Data Source=/app/data/track.db"
+      Track__DataProtectionKeysPath: "/app/data/keys"
+      Track__AdminUsername: "admin"
+      Track__AdminPassword: "admin"   # set in the Portainer stack's env vars
+      Track__PollIntervalSeconds: "15"
+      Track__DiskPollIntervalSeconds: "300"
+      Track__RetentionDays: "14"
+      Track__Ingest__Key: "VsxKak662PKW1kt4rEuqXYEqcfLTBFtL"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager      # pin it: the volume + socket are node-local
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=traefik_net"
+        - "traefik.http.routers.track.rule=Host(`track.chattanooga.digital`)"
+        - "traefik.http.routers.track.entrypoints=websecure"
+        - "traefik.http.routers.track.tls=true"
+        - "traefik.http.routers.track.tls.certresolver=le"
+        - "traefik.http.services.track.loadbalancer.server.port=5020"
+      restart_policy:
+        condition: any
+  agent:
+    image: strangewill/track:latest
+    networks:
+      - traefik_net                  # same overlay as the central service, so `track` resolves
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Run as the image's non-root user with the node's docker-socket group so it can read the socket.
+    # 988 is this cluster's socket GID (stat -c '%g' /var/run/docker.sock); change if your nodes differ.
+    user: "5678:988"
+    environment:
+      Track__Mode: "Agent"
+      # Central is reachable by its swarm service name on the shared overlay; no Traefik/TLS hop needed.
+      Track__Central__Url: "http://track:5020"
+      Track__Central__Key: "VsxKak662PKW1kt4rEuqXYEqcfLTBFtL"     # must equal the central's Track__Ingest__Key
+      # Report under the swarm node's hostname (stable across container restarts), not the container id.
+      Track__NodeName: "{{.Node.Hostname}}"
+      Track__PollIntervalSeconds: "15"
+      Track__DiskPollIntervalSeconds: "300"
+    deploy:
+      mode: global                   # one agent on every node, including new ones
+      restart_policy:
+        condition: any
+
+networks:
+  traefik_net:
+    external: true
+
+volumes:
+  track-data:

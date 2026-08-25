@@ -11,6 +11,7 @@ its own image pins. Sharing a repo couples nothing about how fast they move.
 | [bigcapital](stacks/bigcapital) | Accounting |
 | [mastodon](stacks/mastodon) | Fediverse social |
 | [nextcloud](stacks/nextcloud) | Files, Talk, Office, Whiteboard, groupware |
+| [track](stacks/track) | Per-stack resource metering |
 | [turn](stacks/turn) | Shared TURN/STUN relay for WebRTC |
 
 Each stack's README covers what is specific to it. Read

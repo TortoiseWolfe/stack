@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | State | Running |
-| Repo | **Ready** https://github.com/Chattanooga-Digital/track |
+| Repo | **Ready** [stacks/track](../../stacks/track) |
 | Verdict | Go |
 
 Chattanooga Digital built platform for handling monitoring of resources usage across client stacks.
