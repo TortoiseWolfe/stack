@@ -56,6 +56,10 @@ if occ config:system:get objectstore >/dev/null 2>&1; then
   if [ -z "$S3_BUCKET" ]; then
     die "instance installed on object storage but S3_BUCKET is unset; the environment does not match the instance"
   fi
+  # Which bucket, not just whether there is one. This cluster hosts both
+  # `nextcloud` and `nextcloud-cd`; a presence check calls the wrong one healthy.
+  got="$(occ config:system:get objectstore arguments bucket 2>/dev/null || true)"
+  [ "$got" = "$S3_BUCKET" ] || die "S3_BUCKET=$S3_BUCKET was requested but the instance installed against bucket '${got:-unknown}'"
   log "primary storage: object store, bucket $S3_BUCKET"
 elif [ -n "$S3_BUCKET" ]; then
   die "S3_BUCKET=$S3_BUCKET was requested but the instance installed on a local volume; rebuild from empty volumes"
