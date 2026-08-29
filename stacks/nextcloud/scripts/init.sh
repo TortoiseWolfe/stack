@@ -16,6 +16,7 @@ SMTP_USER="${SMTP_USER:-resend}"
 MAIL_FROM="${MAIL_FROM:-no-reply}"
 TURN_PORT="${TURN_PORT:-3478}"
 ADMIN_ACCOUNTS="${ADMIN_ACCOUNTS:-}"
+MEMBER_ACCOUNTS="${MEMBER_ACCOUNTS:-}"
 EXTRA_APPS="${EXTRA_APPS:-}"
 case "$TALK_ENABLED" in true|false) ;; *) die "TALK_ENABLED must be true or false" ;; esac
 
@@ -143,8 +144,13 @@ fi
 
 # uid:Display Name:email, comma separated. Empty means a rebuild comes back with
 # the service account alone and every real person has to be recreated by hand.
-if [ -n "$ADMIN_ACCOUNTS" ]; then
-  printf '%s\n' "$ADMIN_ACCOUNTS" | tr ',' '\n' | while IFS=: read -r uid name email; do
+# $1 = uid:name:email,... list   $2 = group to put them in
+provision_accounts() {
+  _list="$1"; _group="$2"
+  [ -n "$_list" ] || return 0
+  # Trailing newline matters: `read` drops a final entry with no line ending, which
+  # silently skipped the last account in the list.
+  printf '%s\n' "$_list" | tr ',' '\n' | while IFS=: read -r uid name email; do
     [ -n "$uid" ] || continue
     if occ user:info "$uid" >/dev/null 2>&1; then
       # Existing accounts are left alone. Re-sending the welcome mail on every
@@ -153,12 +159,21 @@ if [ -n "$ADMIN_ACCOUNTS" ]; then
       continue
     fi
     pw="$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-32)"
-    OC_PASS="$pw" occ user:add --password-from-env --group=admin --display-name="$name" "$uid" >/dev/null
+    OC_PASS="$pw" occ user:add --password-from-env --group="$_group" --display-name="$name" "$uid" >/dev/null
     if [ -n "${email:-}" ]; then occ user:setting "$uid" settings email "$email" >/dev/null; fi
     occ user:welcome --reset-password "$uid" >/dev/null
-    log "created '$uid'"
+    log "created '$uid' in group '$_group'"
   done
-fi
+}
+
+# Members are ordinary users, NOT admins. Until now the only provisioning path put
+# every account in the admin group, so adding a pilot member meant making them an
+# administrator of the whole instance. That is the wrong shape for someone who is
+# there to use the thing.
+occ group:add members >/dev/null 2>&1 || true
+
+provision_accounts "$ADMIN_ACCOUNTS" admin
+provision_accounts "$MEMBER_ACCOUNTS" members
 
 # NEXTCLOUD_ADMIN_USER installs as the named account, so on a fresh instance there
 # is no built-in admin to disable and the command would abort the run.
