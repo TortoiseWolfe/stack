@@ -214,6 +214,13 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}
       ADMIN_ACCOUNTS: ${ADMIN_ACCOUNTS:-}
       EXTRA_APPS: ${EXTRA_APPS:-}
+      # init asserts the primary-storage choice, so it needs the same variables
+      # the app is configured from. Without these it reads them as empty and
+      # either never fires or fires against an instance that is correct.
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_HOST: ${S3_HOST:-}
+      S3_KEY: ${S3_KEY:-}
+      S3_SECRET: ${S3_SECRET:-}
     deploy:
       replicas: 1
       # Retried because a first boot can race `app` over the shared volume. The

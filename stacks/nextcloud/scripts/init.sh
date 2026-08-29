@@ -30,6 +30,16 @@ if [ "$TALK_ENABLED" = true ]; then
   printf '%s' "$TURN_SECRET" | grep -Eq '^[A-Za-z0-9]+$' || die "TURN_SECRET must be alphanumeric"
 fi
 
+# Object storage is optional; a partial set is not. Nextcloud reads
+# OBJECTSTORE_S3_* only at first install, so whatever it picks is permanent for
+# the instance and an incomplete set installs to a local volume without error.
+S3_BUCKET="${S3_BUCKET:-}"
+if [ -n "$S3_BUCKET" ]; then
+  [ -n "${S3_HOST:-}" ]   || die "S3_BUCKET is set but S3_HOST is not"
+  [ -n "${S3_KEY:-}" ]    || die "S3_BUCKET is set but S3_KEY is not"
+  [ -n "${S3_SECRET:-}" ] || die "S3_BUCKET is set but S3_SECRET is not"
+fi
+
 # Swarm ignores depends_on, so the app container may still be installing.
 log "waiting for Nextcloud to finish installing"
 i=0
@@ -38,6 +48,24 @@ until occ status 2>/dev/null | grep -q "installed: true"; do
   [ "$i" -le 90 ] || die "Nextcloud never reported installed after 15 minutes"
   sleep 10
 done
+
+# Report what the install actually chose, not what was asked for. Passing the
+# variables is not proof they took, and this is the last moment the difference is
+# cheap to fix.
+if occ config:system:get objectstore >/dev/null 2>&1; then
+  if [ -z "$S3_BUCKET" ]; then
+    die "instance installed on object storage but S3_BUCKET is unset; the environment does not match the instance"
+  fi
+  # Which bucket, not just whether there is one. This cluster hosts both
+  # `nextcloud` and `nextcloud-cd`; a presence check calls the wrong one healthy.
+  got="$(occ config:system:get objectstore arguments bucket 2>/dev/null || true)"
+  [ "$got" = "$S3_BUCKET" ] || die "S3_BUCKET=$S3_BUCKET was requested but the instance installed against bucket '${got:-unknown}'"
+  log "primary storage: object store, bucket $S3_BUCKET"
+elif [ -n "$S3_BUCKET" ]; then
+  die "S3_BUCKET=$S3_BUCKET was requested but the instance installed on a local volume; rebuild from empty volumes"
+else
+  log "primary storage: local volume. Set S3_BUCKET/S3_HOST/S3_KEY/S3_SECRET to use object storage; honoured at first install only, so changing it later is a data migration."
+fi
 
 # The discovery prime below goes through the public hostname, so this waits on
 # Traefik, DNS and the certificate as much as on Collabora.
