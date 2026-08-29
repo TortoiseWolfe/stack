@@ -45,6 +45,7 @@ configs:
     file: ./scripts/init.sh
 
 volumes:
+  stt_whisper2_data:
   nextcloud_html:
     driver: local
   nextcloud_db:
@@ -323,3 +324,71 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-talk.tls=true"
         - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
         - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"
+
+  # Records calls so Talk can transcribe them (#TBD). Nextcloud calls this over
+  # nextcloud_internal, so it needs NO Traefik router and no public exposure.
+  #
+  # It joins the call as a participant by driving a headless Firefox, which makes
+  # it the heaviest thing in this stack while a recording runs -- on a node that
+  # also serves Drupal production and a second tenant's Nextcloud. The ceilings
+  # below are the point, not decoration.
+  talk-recording:
+    image: ${TALK_RECORDING_IMAGE:-nextcloud/aio-talk-recording}:${TALK_RECORDING_VERSION:?TALK_RECORDING_VERSION not set}
+    environment:
+      NC_DOMAIN: ${DOMAIN:?DOMAIN not set}
+      # The HPB is on its OWN host, not ${DOMAIN}. Left unset this silently
+      # defaults to NC_DOMAIN and every recording fails to reach signaling.
+      HPB_DOMAIN: ${TALK_HOST:?TALK_HOST not set}
+      # Must equal the talk container's INTERNAL_SECRET. This is NOT
+      # SIGNALING_SECRET and the two are not interchangeable.
+      INTERNAL_SECRET: ${TALK_INTERNAL_SECRET:?TALK_INTERNAL_SECRET not set}
+      # Must equal the secret in Nextcloud's spreed recording_servers config.
+      RECORDING_SECRET: ${RECORDING_SECRET:?RECORDING_SECRET not set}
+      AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_TALK_RECORDING:-2.0}"
+          memory: ${MEM_LIMIT_TALK_RECORDING:-2G}
+
+  # Speech-to-text provider. Talk transcribes a finished recording automatically
+  # once ANY transcription provider is registered -- this is that provider.
+  #
+  # Registered with AppAPI as "manual-install", deliberately: the alternative
+  # ("docker-install") mounts the Docker socket into a container on a host that
+  # is not ours, and AppAPI's own help calls the socket-proxy form deprecated and
+  # scheduled for removal in Nextcloud 35.
+  #
+  # Upstream recommends 10-20 cores and warns it "will hog all cores by default".
+  # Transcription here is a weekly batch job, so a hard cap costs minutes we do
+  # not care about and protects a live client site we do.
+  stt-whisper2:
+    image: ${STT_WHISPER2_IMAGE:-ghcr.io/nextcloud/stt_whisper2}:${STT_WHISPER2_VERSION:?STT_WHISPER2_VERSION not set}
+    environment:
+      APP_ID: stt_whisper2
+      APP_DISPLAY_NAME: Local Whisper Speech To Text
+      APP_VERSION: ${STT_WHISPER2_VERSION}
+      APP_HOST: 0.0.0.0
+      APP_PORT: ${STT_WHISPER2_PORT:-9030}
+      # Must equal the "secret" field in the app_api:app:register JSON.
+      APP_SECRET: ${STT_WHISPER2_SECRET:?STT_WHISPER2_SECRET not set}
+      APP_PERSISTENT_STORAGE: /nc_app_stt_whisper2_data
+      NEXTCLOUD_URL: https://${DOMAIN}
+      # No NVIDIA hardware on this host despite the CUDA base image.
+      COMPUTE_DEVICE: CPU
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - stt_whisper2_data:/nc_app_stt_whisper2_data
+    networks:
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_STT:-2.0}"
+          memory: ${MEM_LIMIT_STT:-5G}
