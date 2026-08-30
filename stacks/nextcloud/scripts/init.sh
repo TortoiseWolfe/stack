@@ -161,7 +161,7 @@ if [ "$TALK_ENABLED" = true ]; then
     # deploy that was supposed to remove it (measured on production 2026-08-30).
     for d in $(occ app_api:daemon:list 2>/dev/null | awk -F'|' '$5 ~ /docker-install/ {gsub(/ /,"",$3); print $3}'); do
       occ app_api:daemon:unregister "$d" >/dev/null 2>&1 \
-        && log "removed stale docker-install daemon '$d'"
+        && log "removed stale docker-install daemon '$d'" || true
     done
 
     if [ -n "$STT_SECRET" ]; then
@@ -180,7 +180,7 @@ if [ "$TALK_ENABLED" = true ]; then
           && log "registered stt_whisper2 speech-to-text provider" \
           || log "WARN stt_whisper2 registration failed -- is it up on ${STT_HOST:-stt-whisper2}:${STT_PORT:-9030}?"
       fi
-      occ app:enable stt_whisper2 >/dev/null 2>&1
+      occ app:enable stt_whisper2 >/dev/null 2>&1 || true
     fi
 
     # LocalAI (whisper.cpp) as the transcription provider, reached through
@@ -198,8 +198,12 @@ if [ "$TALK_ENABLED" = true ]; then
     # Both stay registered; the preference below is one config value, so swapping
     # engines is a config change rather than a redeploy.
     if [ "${LOCALAI_ENABLED:-true}" = true ]; then
-      occ app:install integration_openai >/dev/null 2>&1
-      occ app:enable integration_openai >/dev/null 2>&1
+      # `|| true` is load-bearing under `set -eu`: app:install is NOT idempotent
+      # and errors when the app is already present, which aborted the whole
+      # script on production 2026-08-30 -- silently, because the failure was
+      # redirected to /dev/null. Same guard the app loop above uses.
+      occ app:install integration_openai >/dev/null 2>&1 || true
+      occ app:enable integration_openai >/dev/null 2>&1 || true
       occ config:app:set integration_openai url --value="${LOCALAI_URL:-http://localai:8080/v1}" >/dev/null
       # Point STT at the prompt-injecting proxy, not LocalAI directly. Without
       # the prompt, base-en garbled the co-op's own name on three runs of four.
