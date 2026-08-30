@@ -46,6 +46,7 @@ configs:
 
 volumes:
   stt_whisper2_data:
+  localai_models:
   nextcloud_html:
     driver: local
   nextcloud_db:
@@ -402,3 +403,38 @@ services:
         limits:
           cpus: "${CPU_LIMIT_STT:-2.0}"
           memory: ${MEM_LIMIT_STT:-5G}
+
+  # whisper.cpp behind an OpenAI-compatible API, as the transcription provider.
+  #
+  # This exists because stt_whisper2 was measured, on staging, at 28x slower than
+  # real time even on its speed-optimised model -- about 28 hours of pegged CPU
+  # for a one-hour meeting -- and it OOM-killed (exit 137) at a 5G ceiling. Its
+  # image is 16.3 GB of CUDA libraries for a host with no GPU.
+  #
+  # This image is 0.3 GB and the default whisper-1 model is whisper.cpp's
+  # quantised ggml-base.bin, ~140 MB. Nextcloud reaches it through the
+  # integration_openai app, which defaults its transcription model to exactly
+  # that name.
+  #
+  # No Traefik router: Nextcloud calls it over nextcloud_internal, and nothing
+  # outside the stack has any business reaching an inference endpoint.
+  localai:
+    image: ${LOCALAI_IMAGE:-localai/localai}:${LOCALAI_VERSION:?LOCALAI_VERSION not set}
+    environment:
+      # Threads must stay at or under the CPU limit below, or whisper.cpp
+      # oversubscribes and gets slower rather than faster.
+      LOCALAI_THREADS: ${LOCALAI_THREADS:-2}
+      LOCALAI_CONTEXT_SIZE: ${LOCALAI_CONTEXT_SIZE:-512}
+      LOCALAI_MODELS_PATH: /models
+      LOCALAI_LOG_LEVEL: ${LOCALAI_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - localai_models:/models
+    networks:
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_LOCALAI:-2.0}"
+          memory: ${MEM_LIMIT_LOCALAI:-2G}
