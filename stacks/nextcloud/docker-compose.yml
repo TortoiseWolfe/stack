@@ -216,6 +216,9 @@ services:
       STT_HOST: ${STT_WHISPER2_HOST:-stt-whisper2}
       STT_PORT: ${STT_WHISPER2_PORT:-9030}
       STT_VERSION: ${STT_WHISPER2_VERSION:-2.5.0}
+      LOCALAI_ENABLED: ${LOCALAI_ENABLED:-true}
+      LOCALAI_URL: ${LOCALAI_URL:-http://localai:8080/v1}
+      LOCALAI_STT_MODEL: ${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}
       SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-resend}

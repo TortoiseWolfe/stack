@@ -178,6 +178,39 @@ if [ "$TALK_ENABLED" = true ]; then
       fi
       occ app:enable stt_whisper2 >/dev/null 2>&1
     fi
+
+    # LocalAI (whisper.cpp) as the transcription provider, reached through
+    # integration_openai. Measured on staging 2026-08-29 against one 8.33s
+    # sample, same node, same 2-core cap:
+    #
+    #   stt_whisper2 large-v3        460.8s  55x real time  OOM-killed at 5G
+    #   stt_whisper2 large-v3-turbo  233.9s  28x
+    #   LocalAI small-en-q5_1        261.3s  31x
+    #   LocalAI base-en-q5_1          64.3s  7.7x
+    #
+    # At MATCHED accuracy the two engines are within ~10% of each other, so this
+    # is not a speed win. It is a footprint win: 0.3 GB image and ~0.2 GB idle,
+    # against 16.3 GB of CUDA libraries and a 3.87 GB peak on a host with no GPU.
+    # Both stay registered; the preference below is one config value, so swapping
+    # engines is a config change rather than a redeploy.
+    if [ "${LOCALAI_ENABLED:-true}" = true ]; then
+      occ app:install integration_openai >/dev/null 2>&1
+      occ app:enable integration_openai >/dev/null 2>&1
+      occ config:app:set integration_openai url --value="${LOCALAI_URL:-http://localai:8080/v1}" >/dev/null
+      occ config:app:set integration_openai stt_url --value="${LOCALAI_URL:-http://localai:8080/v1}" >/dev/null
+      occ config:app:set integration_openai default_stt_model_id --value="${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}" >/dev/null
+      occ config:app:set integration_openai stt_provider_enabled --value=1 >/dev/null
+      occ config:app:set integration_openai service_name --value="LocalAI (self-hosted)" >/dev/null
+      log "transcription provider: LocalAI ${LOCALAI_STT_MODEL:-whisper-base-en-q5_1} at ${LOCALAI_URL:-http://localai:8080/v1}"
+
+      # Without an explicit preference Nextcloud picks the first registered
+      # provider, which was stt_whisper2's LARGEST model AND its "enhanced"
+      # variant -- the slowest possible pairing, and the enhanced one 412s on
+      # every run because it wants a text-generation provider we do not run.
+      occ config:app:set core ai.taskprocessing_provider_preferences \
+        --value='{"core:audio2text":"integration_openai-audio2text"}' >/dev/null
+      log "audio2text preference pinned to integration_openai-audio2text"
+    fi
   fi
 
   # recording_consent is deliberately NOT set. Whether members are asked before
