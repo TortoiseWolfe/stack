@@ -43,6 +43,10 @@ configs:
     # Bump when init.sh changes; Swarm configs are immutable.
     name: ${INIT_CONFIG_NAME:-nextcloud_init_1}
     file: ./scripts/init.sh
+  stt_proxy_py:
+    # Same rule: bump when the proxy script changes or the old one keeps running.
+    name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_1}
+    file: ./scripts/stt-prompt-proxy.py
 
 volumes:
   stt_whisper2_data:
@@ -459,3 +463,37 @@ services:
         limits:
           cpus: "${CPU_LIMIT_LOCALAI:-2.0}"
           memory: ${MEM_LIMIT_LOCALAI:-2G}
+
+  # Adds a vocabulary prompt to Nextcloud's speech-to-text requests.
+  #
+  # Whisper takes a prompt that biases decoding toward expected words, and it is
+  # the difference between "Chata Nougah" and "Chattanooga" -- measured A/B on
+  # identical audio 2026-08-29. It cannot be configured where it belongs:
+  # LocalAI reads the prompt from the REQUEST only (`prompt := c.FormValue`,
+  # no model-config fallback, unlike language and translate), and
+  # integration_openai has no setting to send one. So this sits between them.
+  #
+  # It splices one extra multipart part onto the front of the body rather than
+  # parsing and rebuilding it, so it cannot corrupt the audio payload.
+  stt-proxy:
+    image: ${STT_PROXY_IMAGE:-python}:${STT_PROXY_PYTHON_VERSION:-3.13-alpine}
+    command: ["python3", "/proxy.py"]
+    configs:
+      - source: stt_proxy_py
+        target: /proxy.py
+        mode: 0555
+    environment:
+      UPSTREAM: ${LOCALAI_INTERNAL_URL:-http://localai:8080}
+      LISTEN_PORT: "9040"
+      # Vocabulary, not sentences: an overlong prompt crowds out audio context
+      # and starts leaking into the transcript.
+      STT_PROMPT: ${STT_PROMPT:-Chattanooga Digital, a cooperative in Chattanooga, Tennessee. Eduity. Nextcloud. Talk. CiviCRM. Hubzilla. Collabora.}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_STT_PROXY:-0.5}"
+          memory: ${MEM_LIMIT_STT_PROXY:-128M}

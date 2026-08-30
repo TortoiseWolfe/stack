@@ -201,7 +201,9 @@ if [ "$TALK_ENABLED" = true ]; then
       occ app:install integration_openai >/dev/null 2>&1
       occ app:enable integration_openai >/dev/null 2>&1
       occ config:app:set integration_openai url --value="${LOCALAI_URL:-http://localai:8080/v1}" >/dev/null
-      occ config:app:set integration_openai stt_url --value="${LOCALAI_URL:-http://localai:8080/v1}" >/dev/null
+      # Point STT at the prompt-injecting proxy, not LocalAI directly. Without
+      # the prompt, base-en garbled the co-op's own name on three runs of four.
+      occ config:app:set integration_openai stt_url --value="${LOCALAI_STT_URL:-http://stt-proxy:9040/v1}" >/dev/null
       occ config:app:set integration_openai default_stt_model_id --value="${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}" >/dev/null
       occ config:app:set integration_openai stt_provider_enabled --value=1 >/dev/null
       occ config:app:set integration_openai service_name --value="LocalAI (self-hosted)" >/dev/null
