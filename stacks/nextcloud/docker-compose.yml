@@ -381,8 +381,13 @@ services:
   # Upstream recommends 10-20 cores and warns it "will hog all cores by default".
   # Transcription here is a weekly batch job, so a hard cap costs minutes we do
   # not care about and protects a live client site we do.
+  #
+  # REPLICAS DEFAULTS TO 0. This was the experiment, not the answer. It is a
+  # 16.3 GB image of CUDA libraries for a host with no GPU, it OOM-killed at a
+  # 5G ceiling (exit 137), and at matched accuracy it is no faster than LocalAI,
+  # which is 0.3 GB. Set STT_WHISPER2_REPLICAS=1 to bring it back for comparison.
   stt-whisper2:
-    image: ${STT_WHISPER2_IMAGE:-ghcr.io/nextcloud/stt_whisper2}:${STT_WHISPER2_VERSION:?STT_WHISPER2_VERSION not set}
+    image: ${STT_WHISPER2_IMAGE:-ghcr.io/nextcloud/stt_whisper2}:${STT_WHISPER2_VERSION:-2.5.0}
     environment:
       APP_ID: stt_whisper2
       APP_DISPLAY_NAME: Local Whisper Speech To Text
@@ -390,7 +395,7 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: ${STT_WHISPER2_PORT:-9030}
       # Must equal the "secret" field in the app_api:app:register JSON.
-      APP_SECRET: ${STT_WHISPER2_SECRET:?STT_WHISPER2_SECRET not set}
+      APP_SECRET: ${STT_WHISPER2_SECRET:-}
       APP_PERSISTENT_STORAGE: /nc_app_stt_whisper2_data
       NEXTCLOUD_URL: https://${DOMAIN}
       # No NVIDIA hardware on this host despite the CUDA base image.
@@ -402,6 +407,7 @@ services:
       - nextcloud_internal
     deploy:
       <<: *deploy-stateless
+      replicas: ${STT_WHISPER2_REPLICAS:-0}
       resources:
         limits:
           cpus: "${CPU_LIMIT_STT:-2.0}"
