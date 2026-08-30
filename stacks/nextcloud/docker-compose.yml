@@ -205,6 +205,16 @@ services:
       TURN_PORT: ${TURN_PORT:-3478}
       TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
       SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
+      # Call recording + the speech-to-text provider that turns it into a
+      # transcript. Unset RECORDING_SECRET simply skips the whole block, so an
+      # environment that has not created the secrets yet still boots clean.
+      RECORDING_ENABLED: ${RECORDING_ENABLED:-true}
+      RECORDING_SECRET: ${RECORDING_SECRET:-}
+      RECORDING_URL: ${RECORDING_URL:-http://talk-recording:1234}
+      STT_SECRET: ${STT_WHISPER2_SECRET:-}
+      STT_HOST: ${STT_WHISPER2_HOST:-stt-whisper2}
+      STT_PORT: ${STT_WHISPER2_PORT:-9030}
+      STT_VERSION: ${STT_WHISPER2_VERSION:-2.5.0}
       SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-resend}
