@@ -1,2 +1,5 @@
 .env
 *.bak
+
+# Python bytecode from running the proxy script locally
+__pycache__/
