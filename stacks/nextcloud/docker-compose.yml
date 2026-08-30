@@ -353,6 +353,18 @@ services:
       # The HPB is on its OWN host, not ${DOMAIN}. Left unset this silently
       # defaults to NC_DOMAIN and every recording fails to reach signaling.
       HPB_DOMAIN: ${TALK_HOST:?TALK_HOST not set}
+      # EMPTY, not the image's /standalone-signaling/ default. The recorder
+      # looks its signaling secret up by EXACT string match on the URL Nextcloud
+      # reports (Config.getSignalingSecret: `signalingUrl.rstrip('/')` then
+      # `in self._signalings`). Our spreed signaling_servers is the bare host
+      # https://turn.chattanooga.digital, because the HPB has its own hostname;
+      # AIO instead puts signaling on a path of the main domain, which is where
+      # that default comes from. Left at the default the stored key is
+      # ".../standalone-signaling", the lookup misses, there is no [signaling]
+      # internalsecret to fall back to, and every recording dies with "No
+      # configured signaling secret" AFTER the call has already started
+      # (measured on production 2026-08-30).
+      HPB_PATH: ${TALK_RECORDING_HPB_PATH:-}
       # Must equal the talk container's INTERNAL_SECRET. This is NOT
       # SIGNALING_SECRET and the two are not interchangeable.
       INTERNAL_SECRET: ${TALK_INTERNAL_SECRET:?TALK_INTERNAL_SECRET not set}
