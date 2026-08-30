@@ -156,11 +156,15 @@ if [ "$TALK_ENABLED" = true ]; then
     # production 2026-08-29 pointing at a container that never existed, which
     # logged an error on every admin visit to /settings/apps and would have made
     # this registration fail for an unrelated reason.
+    # OUTSIDE the STT_SECRET guard on purpose. Nested inside it, this never ran
+    # once stt_whisper2 defaulted to 0 replicas, so the stale daemon survived a
+    # deploy that was supposed to remove it (measured on production 2026-08-30).
+    for d in $(occ app_api:daemon:list 2>/dev/null | awk -F'|' '$5 ~ /docker-install/ {gsub(/ /,"",$3); print $3}'); do
+      occ app_api:daemon:unregister "$d" >/dev/null 2>&1 \
+        && log "removed stale docker-install daemon '$d'"
+    done
+
     if [ -n "$STT_SECRET" ]; then
-      for d in $(occ app_api:daemon:list 2>/dev/null | awk -F'|' '$5 ~ /docker-install/ {gsub(/ /,"",$3); print $3}'); do
-        occ app_api:daemon:unregister "$d" >/dev/null 2>&1 \
-          && log "removed stale docker-install daemon '$d'"
-      done
       if ! occ app_api:daemon:list 2>/dev/null | grep -q manual_install; then
         occ app_api:daemon:register manual_install "Manual Install" manual-install \
           http "${STT_HOST:-stt-whisper2}:${STT_PORT:-9030}" "https://$DOMAIN" >/dev/null \
@@ -210,6 +214,20 @@ if [ "$TALK_ENABLED" = true ]; then
       occ config:app:set core ai.taskprocessing_provider_preferences \
         --value='{"core:audio2text":"integration_openai-audio2text"}' >/dev/null
       log "audio2text preference pinned to integration_openai-audio2text"
+
+      # Install the model INTO LocalAI. Without this Nextcloud is pointed at a
+      # model that does not exist, which looks configured and fails on first
+      # use. Idempotent: LocalAI no-ops if it is already present.
+      _lm=${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}
+      _lb=$(printf '%s' "${LOCALAI_URL:-http://localai:8080/v1}" | sed 's#/v1$##')
+      if curl -sf -m 20 "$_lb/v1/models" 2>/dev/null | grep -q "$_lm"; then
+        log "LocalAI model $_lm already installed"
+      elif curl -sf -m 30 -X POST "$_lb/models/apply" \
+             -H 'Content-Type: application/json' -d "{\"id\":\"$_lm\"}" >/dev/null 2>&1; then
+        log "LocalAI model $_lm install requested (downloads in the background)"
+      else
+        log "WARN could not reach LocalAI at $_lb to install $_lm"
+      fi
     fi
   fi
 
