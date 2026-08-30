@@ -45,6 +45,8 @@ configs:
     file: ./scripts/init.sh
 
 volumes:
+  stt_whisper2_data:
+  localai_models:
   nextcloud_html:
     driver: local
   nextcloud_db:
@@ -204,6 +206,19 @@ services:
       TURN_PORT: ${TURN_PORT:-3478}
       TURN_SECRET: ${TURN_SECRET:?TURN_SECRET not set}
       SIGNALING_SECRET: ${SIGNALING_SECRET:?SIGNALING_SECRET not set}
+      # Call recording + the speech-to-text provider that turns it into a
+      # transcript. Unset RECORDING_SECRET simply skips the whole block, so an
+      # environment that has not created the secrets yet still boots clean.
+      RECORDING_ENABLED: ${RECORDING_ENABLED:-true}
+      RECORDING_SECRET: ${RECORDING_SECRET:-}
+      RECORDING_URL: ${RECORDING_URL:-http://talk-recording:1234}
+      STT_SECRET: ${STT_WHISPER2_SECRET:-}
+      STT_HOST: ${STT_WHISPER2_HOST:-stt-whisper2}
+      STT_PORT: ${STT_WHISPER2_PORT:-9030}
+      STT_VERSION: ${STT_WHISPER2_VERSION:-2.5.0}
+      LOCALAI_ENABLED: ${LOCALAI_ENABLED:-true}
+      LOCALAI_URL: ${LOCALAI_URL:-http://localai:8080/v1}
+      LOCALAI_STT_MODEL: ${LOCALAI_STT_MODEL:-whisper-base-en-q5_1}
       SMTP_HOST: ${SMTP_HOST:-smtp.resend.com}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-resend}
@@ -323,3 +338,112 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-talk.tls=true"
         - "traefik.http.routers.${INSTANCE_NAME}-talk.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
         - "traefik.http.services.${INSTANCE_NAME}-talk.loadbalancer.server.port=8081"
+
+  # Records calls so Talk can transcribe them (#TBD). Nextcloud calls this over
+  # nextcloud_internal, so it needs NO Traefik router and no public exposure.
+  #
+  # It joins the call as a participant by driving a headless Firefox, which makes
+  # it the heaviest thing in this stack while a recording runs -- on a node that
+  # also serves Drupal production and a second tenant's Nextcloud. The ceilings
+  # below are the point, not decoration.
+  talk-recording:
+    image: ${TALK_RECORDING_IMAGE:-nextcloud/aio-talk-recording}:${TALK_RECORDING_VERSION:?TALK_RECORDING_VERSION not set}
+    environment:
+      NC_DOMAIN: ${DOMAIN:?DOMAIN not set}
+      # The HPB is on its OWN host, not ${DOMAIN}. Left unset this silently
+      # defaults to NC_DOMAIN and every recording fails to reach signaling.
+      HPB_DOMAIN: ${TALK_HOST:?TALK_HOST not set}
+      # Must equal the talk container's INTERNAL_SECRET. This is NOT
+      # SIGNALING_SECRET and the two are not interchangeable.
+      INTERNAL_SECRET: ${TALK_INTERNAL_SECRET:?TALK_INTERNAL_SECRET not set}
+      # Must equal the secret in Nextcloud's spreed recording_servers config.
+      RECORDING_SECRET: ${RECORDING_SECRET:?RECORDING_SECRET not set}
+      AIO_LOG_LEVEL: ${TALK_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_TALK_RECORDING:-2.0}"
+          memory: ${MEM_LIMIT_TALK_RECORDING:-2G}
+
+  # Speech-to-text provider. Talk transcribes a finished recording automatically
+  # once ANY transcription provider is registered -- this is that provider.
+  #
+  # Registered with AppAPI as "manual-install", deliberately: the alternative
+  # ("docker-install") mounts the Docker socket into a container on a host that
+  # is not ours, and AppAPI's own help calls the socket-proxy form deprecated and
+  # scheduled for removal in Nextcloud 35.
+  #
+  # Upstream recommends 10-20 cores and warns it "will hog all cores by default".
+  # Transcription here is a weekly batch job, so a hard cap costs minutes we do
+  # not care about and protects a live client site we do.
+  #
+  # REPLICAS DEFAULTS TO 0. This was the experiment, not the answer. It is a
+  # 16.3 GB image of CUDA libraries for a host with no GPU, it OOM-killed at a
+  # 5G ceiling (exit 137), and at matched accuracy it is no faster than LocalAI,
+  # which is 0.3 GB. Set STT_WHISPER2_REPLICAS=1 to bring it back for comparison.
+  stt-whisper2:
+    image: ${STT_WHISPER2_IMAGE:-ghcr.io/nextcloud/stt_whisper2}:${STT_WHISPER2_VERSION:-2.5.0}
+    environment:
+      APP_ID: stt_whisper2
+      APP_DISPLAY_NAME: Local Whisper Speech To Text
+      APP_VERSION: ${STT_WHISPER2_VERSION}
+      APP_HOST: 0.0.0.0
+      APP_PORT: ${STT_WHISPER2_PORT:-9030}
+      # Must equal the "secret" field in the app_api:app:register JSON.
+      APP_SECRET: ${STT_WHISPER2_SECRET:-}
+      APP_PERSISTENT_STORAGE: /nc_app_stt_whisper2_data
+      NEXTCLOUD_URL: https://${DOMAIN}
+      # No NVIDIA hardware on this host despite the CUDA base image.
+      COMPUTE_DEVICE: CPU
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - stt_whisper2_data:/nc_app_stt_whisper2_data
+    networks:
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      replicas: ${STT_WHISPER2_REPLICAS:-0}
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_STT:-2.0}"
+          memory: ${MEM_LIMIT_STT:-5G}
+
+  # whisper.cpp behind an OpenAI-compatible API, as the transcription provider.
+  #
+  # This exists because stt_whisper2 was measured, on staging, at 28x slower than
+  # real time even on its speed-optimised model -- about 28 hours of pegged CPU
+  # for a one-hour meeting -- and it OOM-killed (exit 137) at a 5G ceiling. Its
+  # image is 16.3 GB of CUDA libraries for a host with no GPU.
+  #
+  # This image is 0.3 GB and the default whisper-1 model is whisper.cpp's
+  # quantised ggml-base.bin, ~140 MB. Nextcloud reaches it through the
+  # integration_openai app, which defaults its transcription model to exactly
+  # that name.
+  #
+  # No Traefik router: Nextcloud calls it over nextcloud_internal, and nothing
+  # outside the stack has any business reaching an inference endpoint.
+  localai:
+    image: ${LOCALAI_IMAGE:-localai/localai}:${LOCALAI_VERSION:?LOCALAI_VERSION not set}
+    environment:
+      # Threads must stay at or under the CPU limit below, or whisper.cpp
+      # oversubscribes and gets slower rather than faster.
+      LOCALAI_THREADS: ${LOCALAI_THREADS:-2}
+      LOCALAI_CONTEXT_SIZE: ${LOCALAI_CONTEXT_SIZE:-512}
+      LOCALAI_MODELS_PATH: /models
+      LOCALAI_LOG_LEVEL: ${LOCALAI_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - localai_models:/models
+    networks:
+      - nextcloud_internal
+    deploy:
+      <<: *deploy-stateless
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT_LOCALAI:-2.0}"
+          memory: ${MEM_LIMIT_LOCALAI:-2G}
