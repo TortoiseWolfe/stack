@@ -531,7 +531,12 @@ services:
       resources:
         limits:
           cpus: "${CPU_LIMIT_LOCALAI:-2.0}"
-          memory: ${MEM_LIMIT_LOCALAI:-2G}
+          # whisper loads the audio as float32: an hour of 16 kHz mono is about
+          # 230 MB of samples before buffers. Measured peak 2,270 MB for a
+          # one-hour recording on 2026-09-01, where a 2 GB limit was OOM-killed
+          # with nothing but "error reading from server: EOF" to show for it.
+          # 4 GB covers the two-hour planning ceiling.
+          memory: ${MEM_LIMIT_LOCALAI:-4G}
 
   # Adds a vocabulary prompt to Nextcloud's speech-to-text requests.
   #
