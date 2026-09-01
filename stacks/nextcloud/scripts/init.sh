@@ -89,6 +89,37 @@ occ config:system:set mail_smtppassword --value="$SMTP_PASSWORD" >/dev/null
 occ config:system:set mail_from_address --value="$MAIL_FROM" >/dev/null
 occ config:system:set mail_domain --value="$MAIL_DOMAIN" >/dev/null
 
+# Audit logging that actually records something.
+#
+# `admin_audit` was enabled on production from 2026-08-20 and its log file was ZERO BYTES
+# on 2026-09-01, having never been written to. Enabling the app is not enough, and the
+# combination that makes it silent is not obvious:
+#
+#   Actions/Action.php calls $logger->info(). Log.php falls back to
+#   getValue('loglevel', ILogger::WARN), and INFO (1) is below WARN (2), so every audit
+#   entry is discarded before it reaches the file.
+#
+# So the app reports enabled, the file exists, and nothing is ever recorded. That is worse
+# than having no audit log, because it reads as coverage. It cost us the answer to "who
+# created these accounts" on 2026-09-01, which had to be reconstructed from git history.
+#
+# `log.condition.matches` lowers the threshold for ONE app rather than globally: Action.php
+# passes ['app' => 'admin_audit'] as context and Log.php matches on exactly that key, so
+# the rest of the instance stays at WARN and nextcloud.log does not fill with INFO noise.
+#
+# Rotation needs no setting: admin_audit's own Rotate job defaults log_rotate_size to 100MB.
+occ config:system:set log_type_audit --value=file >/dev/null
+occ config:system:set logfile_audit --value=/var/www/html/data/audit.log >/dev/null
+occ config:system:set log.condition matches 0 apps 0 --value=admin_audit >/dev/null
+occ config:system:set log.condition matches 0 loglevel --value=1 --type=integer >/dev/null
+
+# Nextcloud drops a sample contact ("Leon Green, Manager at Company") and a sample event
+# into every NEW account. Fine for a demo, noise on a co-op instance where the first thing
+# a member sees should be their own data. Existing accounts keep whatever they already have;
+# this only stops it being created again.
+occ config:app:set dav createExampleContact --value=no >/dev/null
+occ config:app:set dav createExampleEvent --value=no >/dev/null
+
 apps="richdocuments whiteboard deck calendar contacts mail quota_warning admin_audit suspicious_login admincockpit firstrunwizard twofactor_totp twofactor_backupcodes $EXTRA_APPS"
 if [ "$TALK_ENABLED" = true ]; then apps="spreed $apps"; fi
 for app in $apps; do
