@@ -185,6 +185,49 @@ services:
         limits:
           memory: ${MEM_LIMIT_CRON:-512M}
 
+  # NOTHING PROCESSES AI TASKS WITHOUT THIS.
+  #
+  # `integration_openai` is a SYNCHRONOUS TaskProcessing provider, and Nextcloud
+  # runs those only from a dedicated worker. Cron does not run them. Without a
+  # worker a Talk transcription is accepted, written to the queue as RUNNING, and
+  # sits at progress 0 for ever -- no error, no log line, nothing on the status
+  # page. It looks exactly like a slow job.
+  #
+  # Found 2026-09-01 on the first real meeting recording. The recording was
+  # intact, LocalAI had the model, the provider was configured, and the job had
+  # been "running" for 25 minutes having never contacted anything. There was
+  # simply nobody to run it. Starting a worker by hand moved it in seconds.
+  #
+  # Waits for the install rather than racing it, because Swarm ignores
+  # depends_on ordering.
+  taskworker:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        until php /var/www/html/occ status 2>/dev/null | grep -q 'installed: true';
+        do echo '[taskworker] waiting for install'; sleep 10; done;
+        echo '[taskworker] starting';
+        exec php /var/www/html/occ taskprocessing:worker
+    user: www-data
+    working_dir: /var/www/html
+    volumes:
+      - nextcloud_html:/var/www/html
+    environment:
+      TZ: ${TZ:-America/New_York}
+      # A two-hour recording through whisper-base on CPU runs long. PHP's own
+      # limit has to outlast the HTTP call the worker is making.
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-1G}
+    networks:
+      - nextcloud_internal
+    depends_on:
+      - app
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_TASKWORKER:-1G}
+
   # Installs the apps. Without it a deploy yields a stock Nextcloud: the `talk`
   # service is only the signaling backend, not the Talk app.
   init:
