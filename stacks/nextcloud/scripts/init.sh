@@ -113,12 +113,36 @@ occ config:system:set logfile_audit --value=/var/www/html/data/audit.log >/dev/n
 occ config:system:set log.condition matches 0 apps 0 --value=admin_audit >/dev/null
 occ config:system:set log.condition matches 0 loglevel --value=1 --type=integer >/dev/null
 
-# Nextcloud drops a sample contact ("Leon Green, Manager at Company") and a sample event
-# into every NEW account. Fine for a demo, noise on a co-op instance where the first thing
-# a member sees should be their own data. Existing accounts keep whatever they already have;
-# this only stops it being created again.
-occ config:app:set dav createExampleContact --value=no >/dev/null
+# Nextcloud seeds every NEW account with a sample contact on first login, so Contacts is
+# not an empty screen that reads as broken. The stock card is "Leon Green, Manager at
+# Company" -- a plausible-looking fake PERSON, which in a co-op member's address book reads
+# like somebody they are supposed to know. The give-aways (123 Street Street,
+# leon@example.com, +999999999999) only show once the card is opened.
+#
+# So the sample stays ON, but the card is ours: an obviously-not-a-person contact for the
+# co-op itself, which teaches the same thing and is actually useful to have.
+occ config:app:set dav createExampleContact --value=yes >/dev/null
+
+# The sample EVENT stays off: there is no replacement designed for it, and the stock one has
+# the same fake-data problem with nothing better to put in its place.
 occ config:app:set dav createExampleEvent --value=no >/dev/null
+
+# The card itself lives in appdata (dav/defaultContact/defaultContact.vcf) with
+# `hasCustomDefaultContact` in appconfig, so it survives ordinary redeploys. It is NOT
+# re-applied here: doing so needs an authenticated HTTP PUT, and on a cold rebuild the
+# public URL may not have a certificate yet, which would make this step fail for a reason
+# unrelated to what it is doing. A rebuild from empty volumes therefore falls back to Leon
+# Green, which is wrong but not broken. Re-apply with:
+#
+#   curl -u "$ADMIN_USER:$ADMIN_PASSWORD" -X PUT \
+#     "https://$DOMAIN/apps/dav/api/defaultcontact/contact" \
+#     -H 'Content-Type: application/json' \
+#     --data "{\"contactData\": \"$(sed -z 's/\n/\\n/g' contact.vcf)\"}"
+#
+# Verify by creating an account, logging in once (the address book is created on FIRST
+# LOGIN, not at creation -- checking straight after `user:add` shows no addressbooks and
+# proves nothing), then exporting:
+#   /remote.php/dav/addressbooks/users/<uid>/contacts/?export
 
 apps="richdocuments whiteboard deck calendar contacts mail quota_warning admin_audit suspicious_login admincockpit firstrunwizard twofactor_totp twofactor_backupcodes $EXTRA_APPS"
 if [ "$TALK_ENABLED" = true ]; then apps="spreed $apps"; fi

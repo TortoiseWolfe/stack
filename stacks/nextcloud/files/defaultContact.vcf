@@ -1,0 +1,9 @@
+BEGIN:VCARD
+VERSION:3.0
+UID:cd-sample-contact-0001
+FN:Chattanooga.Digital
+ORG:Chattanooga.Digital
+EMAIL;TYPE=WORK:Membership@Chattanooga.Digital
+URL:https://chattanooga.digital
+NOTE:Sample contact added to every new account so you can see how Contacts works. Safe to delete.
+END:VCARD
