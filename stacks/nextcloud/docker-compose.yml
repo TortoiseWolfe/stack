@@ -49,6 +49,7 @@ configs:
     file: ./scripts/stt-prompt-proxy.py
 
 volumes:
+  localai_backends:
   stt_scratch:
   stt_whisper2_data:
   localai_models:
@@ -502,8 +503,27 @@ services:
       LOCALAI_MODELS_PATH: /models
       LOCALAI_LOG_LEVEL: ${LOCALAI_LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
+    # LocalAI v4 ships NO backends in the image: /models holds the model
+    # definition, /backends holds the runtime that executes it, and the image has
+    # an empty /backends. Worse, /backends was not persisted, so anything
+    # installed there vanished on the next container restart. The symptom is
+    # brutal to diagnose: /v1/models happily advertises whisper-base-en-q5_1, so
+    # every readiness check passes, and the request then fails with
+    # "backend not found: whisper". Found 2026-09-01 after a real meeting
+    # recording could not be transcribed.
+    #
+    # Installed on start if absent, into a volume so it is downloaded once.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - if [ ! -d /backends/whisper ]; then
+          echo "[localai] installing whisper backend";
+          /local-ai backends install whisper || echo "[localai] whisper backend install FAILED";
+        fi;
+        exec /entrypoint.sh
     volumes:
       - localai_models:/models
+      - localai_backends:/backends
     networks:
       - nextcloud_internal
     deploy:
