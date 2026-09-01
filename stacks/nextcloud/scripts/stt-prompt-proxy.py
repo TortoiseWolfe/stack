@@ -28,7 +28,12 @@ cost as a two-minute one.
 """
 import http.client
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -46,6 +51,9 @@ MAX_RESPONSE = int(os.environ.get("STT_MAX_RESPONSE", str(32 * 1024 * 1024)))
 # planning ceiling, so the default allows four hours of processing rather than
 # the 30 minutes that silently bounded the first version.
 UPSTREAM_TIMEOUT = int(os.environ.get("STT_UPSTREAM_TIMEOUT", "14400"))
+FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
+FFMPEG_TIMEOUT = int(os.environ.get("STT_FFMPEG_TIMEOUT", "3600"))
+TMPDIR = os.environ.get("STT_TMPDIR", "/tmp")
 
 _up = urlsplit(UPSTREAM)
 UP_HOST, UP_PORT = _up.hostname, _up.port or 80
@@ -62,79 +70,184 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log("  %s" % (fmt % args))
 
+    # ---- multipart helpers ---------------------------------------------------
+    # Scan on DISK, never in memory. The body is a recording; a two-hour call is
+    # the planning ceiling and none of it is held.
+
+    @staticmethod
+    def _split_parts(path, boundary):
+        """Yield (headers_bytes, start, end) for each part, by byte offset."""
+        delim = b"--" + boundary
+        with open(path, "rb") as f:
+            data_positions, buf, pos = [], b"", 0
+            while True:
+                chunk = f.read(BLOCK)
+                if not chunk:
+                    break
+                buf += chunk
+                while True:
+                    i = buf.find(delim)
+                    if i < 0:
+                        break
+                    data_positions.append(pos + i)
+                    buf = buf[i + len(delim):]
+                    pos = pos + i + len(delim)
+                keep = len(delim)
+                if len(buf) > keep:
+                    pos += len(buf) - keep
+                    buf = buf[-keep:]
+        with open(path, "rb") as f:
+            for n, off in enumerate(data_positions[:-1]):
+                f.seek(off + len(delim))
+                head = f.read(8192)
+                if head.startswith(b"--"):
+                    continue
+                hdr_end = head.find(b"\r\n\r\n")
+                if hdr_end < 0:
+                    continue
+                headers = head[:hdr_end]
+                body_start = off + len(delim) + hdr_end + 4
+                body_end = data_positions[n + 1] - 2   # strip the CRLF before the delimiter
+                yield headers, body_start, body_end
+
+    def _transcode(self, src, dst):
+        """webm/mkv -> 16 kHz mono wav, which is what whisper wants anyway."""
+        cmd = [FFMPEG, "-nostdin", "-loglevel", "error", "-y", "-i", src,
+               "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", dst]
+        r = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT)
+        if r.returncode != 0 or not os.path.exists(dst) or os.path.getsize(dst) == 0:
+            raise IOError("ffmpeg failed rc=%s: %s"
+                          % (r.returncode, r.stderr.decode("utf-8", "replace")[:300]))
+        return os.path.getsize(dst)
+
     def _relay(self, method):
         length = int(self.headers.get("Content-Length") or 0)
         ctype = self.headers.get("Content-Type", "")
+        is_stt = (method == "POST"
+                  and "audio/transcriptions" in self.path
+                  and ctype.startswith("multipart/form-data")
+                  and "boundary=" in ctype)
 
-        # Decide on HEADERS ALONE. The old version tested `b'name="prompt"' not in
-        # body`, which required having the whole body in hand -- the thing that made
-        # streaming impossible. Nextcloud's integration_openai has no STT-prompt
-        # setting, so a prompt part never arrives; and if a future version starts
-        # sending one, LocalAI reads the LAST value for a repeated field, so ours
-        # sitting first would lose to theirs rather than corrupt anything.
-        injected = (PROMPT
-                    and method == "POST"
-                    and "audio/transcriptions" in self.path
-                    and ctype.startswith("multipart/form-data")
-                    and "boundary=" in ctype)
+        tmpdir = None
+        try:
+            if is_stt and length > 0:
+                tmpdir = tempfile.mkdtemp(prefix="stt-", dir=TMPDIR)
+                raw = os.path.join(tmpdir, "upload.bin")
+                remaining = length
+                with open(raw, "wb") as out:
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(BLOCK, remaining))
+                        if not chunk:
+                            raise IOError("client stopped sending with %d of %d bytes to go"
+                                          % (remaining, length))
+                        out.write(chunk)
+                        remaining -= len(chunk)
+                body_path, body_ctype = self._rebuild(tmpdir, raw, ctype, length)
+                with open(body_path, "rb") as bf:
+                    self._forward(method, bf, os.path.getsize(body_path), body_ctype)
+            else:
+                self._forward(method, self.rfile, length, ctype)
+        except Exception as exc:                       # noqa: BLE001
+            log("  error after %d byte body: %s" % (length, exc))
+            try:
+                self.send_response(502)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+            except Exception:                          # noqa: BLE001
+                pass
+        finally:
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
-        part = b""
-        if injected:
-            boundary = ctype.split("boundary=", 1)[1].split(";")[0].strip().strip('"')
-            part = (
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="prompt"\r\n\r\n'
-                f"{PROMPT[:MAX_PROMPT]}\r\n"
-            ).encode()
+    def _rebuild(self, tmpdir, raw, ctype, length):
+        """Extract the audio, transcode it, and re-emit a small multipart body."""
+        boundary = ctype.split("boundary=", 1)[1].split(";")[0].strip().strip('"')
+        nb = uuid.uuid4().hex
+        out_path = os.path.join(tmpdir, "body.bin")
+        media = os.path.join(tmpdir, "media")
+        wav = os.path.join(tmpdir, "audio.wav")
+        seen_prompt = False
+        fields = []
 
+        with open(raw, "rb") as f:
+            for headers, start, end in self._split_parts(raw, boundary.encode()):
+                disp = headers.decode("utf-8", "replace")
+                name = re.search(r'name="([^"]*)"', disp)
+                name = name.group(1) if name else ""
+                if name == "prompt":
+                    seen_prompt = True
+                if "filename=" in disp:
+                    f.seek(start)
+                    left = end - start
+                    with open(media, "wb") as mf:
+                        while left > 0:
+                            c = f.read(min(BLOCK, left))
+                            if not c:
+                                break
+                            mf.write(c)
+                            left -= len(c)
+                else:
+                    f.seek(start)
+                    fields.append((name, f.read(max(0, min(end - start, 65536)))))
+
+        if not os.path.exists(media):
+            raise IOError("no file part found in the upload")
+        before = os.path.getsize(media)
+        after = self._transcode(media, wav)
+        log("  transcoded %d -> %d bytes (%.1f%% of original)"
+            % (before, after, after * 100.0 / max(before, 1)))
+        os.remove(media)
+
+        with open(out_path, "wb") as o:
+            for name, val in fields:
+                o.write(b"--" + nb.encode() + b"\r\n")
+                o.write(('Content-Disposition: form-data; name="%s"\r\n\r\n' % name).encode())
+                o.write(val + b"\r\n")
+            if PROMPT and not seen_prompt:
+                o.write(b"--" + nb.encode() + b"\r\n")
+                o.write(b'Content-Disposition: form-data; name="prompt"\r\n\r\n')
+                o.write(PROMPT[:MAX_PROMPT].encode() + b"\r\n")
+            o.write(b"--" + nb.encode() + b"\r\n")
+            o.write(b'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n')
+            o.write(b"Content-Type: audio/wav\r\n\r\n")
+            with open(wav, "rb") as wf:
+                shutil.copyfileobj(wf, o, BLOCK)
+            o.write(b"\r\n--" + nb.encode() + b"--\r\n")
+        os.remove(wav)
+        return out_path, "multipart/form-data; boundary=%s" % nb
+
+    def _forward(self, method, body_file, body_len, ctype):
         conn = http.client.HTTPConnection(UP_HOST, UP_PORT, timeout=UPSTREAM_TIMEOUT)
         try:
             conn.putrequest(method, self.path, skip_host=True, skip_accept_encoding=True)
             for k, v in self.headers.items():
                 if k.lower() in ("content-length", "host", "connection",
-                                 "transfer-encoding", "expect"):
+                                 "transfer-encoding", "expect", "content-type"):
                     continue
                 conn.putheader(k, v)
-            conn.putheader("Host", f"{UP_HOST}:{UP_PORT}")
-            # Exact length is known without buffering, so no chunked encoding and
-            # no upstream that has to support it.
-            conn.putheader("Content-Length", str(len(part) + length))
+            conn.putheader("Host", "%s:%d" % (UP_HOST, UP_PORT))
+            if ctype:
+                conn.putheader("Content-Type", ctype)
+            conn.putheader("Content-Length", str(body_len))
             conn.endheaders()
-
-            if part:
-                conn.send(part)
-            remaining = length
+            remaining = body_len
             while remaining > 0:
-                chunk = self.rfile.read(min(BLOCK, remaining))
+                chunk = body_file.read(min(BLOCK, remaining))
                 if not chunk:
-                    raise IOError(
-                        f"client stopped sending with {remaining} of {length} bytes to go")
+                    raise IOError("body ended early with %d bytes to go" % remaining)
                 conn.send(chunk)
                 remaining -= len(chunk)
-
             resp = conn.getresponse()
-            # The reply is a JSON transcript, small enough to hold. Cap it anyway so
-            # a misbehaving upstream cannot do to us what the recording just did.
             payload = resp.read(MAX_RESPONSE + 1)
             if len(payload) > MAX_RESPONSE:
-                raise IOError(f"upstream response exceeded {MAX_RESPONSE} bytes")
-        except Exception as exc:                       # noqa: BLE001
-            # Log the size too: "connection reset" told us nothing last time, and the
-            # number is what points straight at a limit.
-            log(f"  upstream error after {length} byte body: {exc}")
+                raise IOError("upstream response exceeded %d bytes" % MAX_RESPONSE)
+        finally:
             try:
-                self.send_response(502)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                conn.close()
             except Exception:                          # noqa: BLE001
                 pass
-            return
-        finally:
-            conn.close()
-
-        if injected:
-            log(f"  injected prompt ({len(PROMPT)} chars), relayed {length} bytes "
-                f"-> {self.path} [{resp.status}]")
         self.send_response(resp.status)
         for k, v in resp.getheaders():
             if k.lower() in ("transfer-encoding", "connection", "content-length"):
@@ -152,6 +265,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    log(f"stt-prompt-proxy -> {UPSTREAM} on :{LISTEN_PORT}; "
-        f"prompt {'set, %d chars' % len(PROMPT) if PROMPT else 'EMPTY (pass-through only)'}")
+    log("stt-prompt-proxy -> %s on :%d; prompt %s; ffmpeg=%s"
+        % (UPSTREAM, LISTEN_PORT,
+           ("set, %d chars" % len(PROMPT)) if PROMPT else "EMPTY",
+           shutil.which(FFMPEG) or "MISSING"))
     ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()

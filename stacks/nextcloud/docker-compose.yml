@@ -49,6 +49,7 @@ configs:
     file: ./scripts/stt-prompt-proxy.py
 
 volumes:
+  stt_scratch:
   stt_whisper2_data:
   localai_models:
   nextcloud_html:
@@ -493,6 +494,11 @@ services:
       # oversubscribes and gets slower rather than faster.
       LOCALAI_THREADS: ${LOCALAI_THREADS:-2}
       LOCALAI_CONTEXT_SIZE: ${LOCALAI_CONTEXT_SIZE:-512}
+      # LocalAI's default upload limit is 15 MB. Sixteen-kHz mono audio runs about
+      # 115 MB per hour, so even a correctly transcoded two-hour meeting clears
+      # the default many times over. A 278 MB recording on 2026-09-01 was refused
+      # mid-upload and surfaced only as a broken pipe. This bounds abuse, not use.
+      LOCALAI_UPLOAD_LIMIT: ${LOCALAI_UPLOAD_LIMIT:-512}
       LOCALAI_MODELS_PATH: /models
       LOCALAI_LOG_LEVEL: ${LOCALAI_LOG_LEVEL:-info}
       TZ: ${TZ:-America/New_York}
@@ -520,7 +526,17 @@ services:
   # parsing and rebuilding it, so it cannot corrupt the audio payload.
   stt-proxy:
     image: ${STT_PROXY_IMAGE:-python}:${STT_PROXY_PYTHON_VERSION:-3.13-alpine}
-    command: ["python3", "/proxy.py"]
+    # ffmpeg is what makes this a transcoder rather than a relay. Installed at
+    # start rather than baked into an image, because building and hosting one for
+    # sixty lines of Python costs more than it saves. If the install fails the
+    # proxy still starts and reports ffmpeg=MISSING rather than dying quietly.
+    command:
+      - /bin/sh
+      - -c
+      - apk add --no-cache ffmpeg >/dev/null 2>&1 || echo "[stt-proxy] ffmpeg install FAILED";
+        exec python3 /proxy.py
+    volumes:
+      - stt_scratch:/scratch
     configs:
       - source: stt_proxy_py
         target: /proxy.py
@@ -531,6 +547,8 @@ services:
       # Vocabulary, not sentences: an overlong prompt crowds out audio context
       # and starts leaking into the transcript.
       STT_PROMPT: ${STT_PROMPT:-Chattanooga Digital, a cooperative in Chattanooga, Tennessee. Eduity. Nextcloud. Talk. CiviCRM. Hubzilla. Collabora.}
+      # A recording is written here, never held in memory.
+      STT_TMPDIR: /scratch
       TZ: ${TZ:-America/New_York}
     networks:
       - nextcloud_internal
@@ -538,5 +556,7 @@ services:
       <<: *deploy-stateless
       resources:
         limits:
-          cpus: "${CPU_LIMIT_STT_PROXY:-0.5}"
-          memory: ${MEM_LIMIT_STT_PROXY:-128M}
+          # Transcoding is CPU-bound. Half a core made a long recording take
+          # longer to convert than it took to record.
+          cpus: "${CPU_LIMIT_STT_PROXY:-2}"
+          memory: ${MEM_LIMIT_STT_PROXY:-256M}
