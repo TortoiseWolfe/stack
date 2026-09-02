@@ -121,6 +121,12 @@ occ config:system:set log.condition matches 0 loglevel --value=1 --type=integer 
 #
 # So the sample stays ON, but the card is ours: an obviously-not-a-person contact for the
 # co-op itself, which teaches the same thing and is actually useful to have.
+occ config:app:set dav createExampleContact --value=yes >/dev/null
+
+# The sample EVENT stays off: there is no replacement designed for it, and the stock one has
+# the same fake-data problem with nothing better to put in its place.
+occ config:app:set dav createExampleEvent --value=no >/dev/null
+
 # Speech-to-text timeouts. `stt_request_timeout` is a SEPARATE setting from
 # `request_timeout`, and only the former governs transcription. Setting the
 # obvious-looking one changes nothing, which cost two wrong turns on 2026-09-01
@@ -130,12 +136,6 @@ occ config:system:set log.condition matches 0 loglevel --value=1 --type=integer 
 # planning ceiling, so 4 hours of headroom is deliberate rather than arbitrary.
 occ config:app:set integration_openai stt_request_timeout --value="${STT_REQUEST_TIMEOUT:-14400}" >/dev/null
 occ config:app:set integration_openai request_timeout --value="${STT_REQUEST_TIMEOUT:-14400}" >/dev/null
-
-occ config:app:set dav createExampleContact --value=yes >/dev/null
-
-# The sample EVENT stays off: there is no replacement designed for it, and the stock one has
-# the same fake-data problem with nothing better to put in its place.
-occ config:app:set dav createExampleEvent --value=no >/dev/null
 
 # The card itself lives in appdata (dav/defaultContact/defaultContact.vcf) with
 # `hasCustomDefaultContact` in appconfig, so it survives ordinary redeploys. It is NOT
