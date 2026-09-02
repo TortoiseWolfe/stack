@@ -56,3 +56,21 @@ owner and rendered as a recording rather than a generic file, and the owner's pe
 "share this?" notification is cleared.
 
 Set `RECORDING_AUTOSHARE=0` to turn it off and get Talk's stock behaviour back.
+
+## Why there is no "Live transcription" here
+
+The Talk UI shows an **Enable live transcription** toggle, greyed out, in every conversation's
+settings. That is expected and is not a misconfiguration. Talk ships the switch; the transcriber
+is a separate ExApp container that is not installed.
+
+It would also not replace what this stack does. `live_transcription` is a Vosk captions client
+that never writes a file: `send_transcript()` pushes text over the signaling socket to the
+sessions currently in the call, and `close()` drains the queue and discards it when the call
+ends (verified in upstream `v2.1.3`, `ex_app/lib/spreed_client.py:541` and `:676-678`). The
+transcript that exists on disk comes from Talk's own recording path instead.
+
+Installing it would need nothing from William, since the same `manual_install` daemon route this
+stack already uses for `stt_whisper2` applies. Nobody has tested that. Full reasoning, caveats,
+and the separate question of `stt_whisper2` sitting at 0 replicas:
+`cd-nextcloud/docs/NEXTCLOUD.md` → *Meeting transcripts, and why NOT "Live transcription"*.
+
