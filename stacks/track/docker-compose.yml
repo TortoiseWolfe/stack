@@ -1,8 +1,6 @@
-version: "3.8"
-
 services:
   track:
-    image: strangewill/track:latest
+    image: strangewill/track:${TRACK_VERSION:?TRACK_VERSION not set}
     networks:
       - traefik_net
     volumes:
@@ -11,12 +9,12 @@ services:
     environment:
       ConnectionStrings__Default: "Data Source=/app/data/track.db"
       Track__DataProtectionKeysPath: "/app/data/keys"
-      Track__AdminUsername: "admin"
-      Track__AdminPassword: "admin"   # set in the Portainer stack's env vars
+      Track__AdminUsername: ${ADMIN_USER:-admin}
+      Track__AdminPassword: ${ADMIN_PASSWORD:?ADMIN_PASSWORD not set}   # set in the Portainer stack's env vars
       Track__PollIntervalSeconds: "15"
       Track__DiskPollIntervalSeconds: "300"
       Track__RetentionDays: "14"
-      Track__Ingest__Key: "VsxKak662PKW1kt4rEuqXYEqcfLTBFtL"
+      Track__Ingest__Key: ${INGEST_KEY:?INGEST_KEY not set}
     deploy:
       replicas: 1
       placement:
@@ -24,16 +22,16 @@ services:
           - node.role == manager      # pin it: the volume + socket are node-local
       labels:
         - "traefik.enable=true"
-        - "traefik.swarm.network=traefik_net"
-        - "traefik.http.routers.track.rule=Host(`track.chattanooga.digital`)"
-        - "traefik.http.routers.track.entrypoints=websecure"
-        - "traefik.http.routers.track.tls=true"
-        - "traefik.http.routers.track.tls.certresolver=le"
-        - "traefik.http.services.track.loadbalancer.server.port=5020"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${DOMAIN:?DOMAIN not set}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=5020"
       restart_policy:
         condition: any
   agent:
-    image: strangewill/track:latest
+    image: strangewill/track:${TRACK_VERSION:?TRACK_VERSION not set}
     networks:
       - traefik_net                  # same overlay as the central service, so `track` resolves
     volumes:
@@ -45,7 +43,7 @@ services:
       Track__Mode: "Agent"
       # Central is reachable by its swarm service name on the shared overlay; no Traefik/TLS hop needed.
       Track__Central__Url: "http://track:5020"
-      Track__Central__Key: "VsxKak662PKW1kt4rEuqXYEqcfLTBFtL"     # must equal the central's Track__Ingest__Key
+      Track__Central__Key: ${INGEST_KEY:?INGEST_KEY not set}     # must equal the central's Track__Ingest__Key
       # Report under the swarm node's hostname (stable across container restarts), not the container id.
       Track__NodeName: "{{.Node.Hostname}}"
       Track__PollIntervalSeconds: "15"
