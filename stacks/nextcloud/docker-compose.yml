@@ -49,7 +49,7 @@ configs:
     file: ./scripts/stt-prompt-proxy.py
   share_recordings_php:
     # Same rule: bump when the script changes or the old one keeps running.
-    name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_1}
+    name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_2}
     file: ./scripts/share-recordings.php
 
 volumes:
@@ -516,7 +516,7 @@ services:
     environment:
       APP_ID: stt_whisper2
       APP_DISPLAY_NAME: Local Whisper Speech To Text
-      APP_VERSION: ${STT_WHISPER2_VERSION}
+      APP_VERSION: ${STT_WHISPER2_VERSION:-2.5.0}
       APP_HOST: 0.0.0.0
       APP_PORT: ${STT_WHISPER2_PORT:-9030}
       # Must equal the "secret" field in the app_api:app:register JSON.
