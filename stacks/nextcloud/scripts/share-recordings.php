@@ -40,7 +40,10 @@ require_once '/var/www/html/lib/base.php';
 // and an unattributed duplicate from the listener showing actor "cli". Presenting
 // the same route the real endpoint presents makes shareToChat() behave here exactly
 // as it does in the web UI. If spreed ever renames that route this reverts to
-// posting duplicates -- noisy, not broken -- so the count is asserted in the test.
+// posting duplicates -- noisy, not broken. The message count was verified by hand
+// against a throwaway room on 2026-09-01 (one file produced exactly one message,
+// attributed to its owner); there is no automated test in this repo yet, so re-check
+// it after a Talk upgrade.
 $request = \OC::$server->get(\OCP\IRequest::class);
 if (method_exists($request, 'setUrlParameters')) {
     $request->setUrlParameters(['_route' => 'ocs.spreed.recording.sharetochat']);
