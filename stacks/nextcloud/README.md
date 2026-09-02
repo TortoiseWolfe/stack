@@ -39,3 +39,20 @@ it and no port is published for it.
 
 Primary storage is the `nextcloud_html` volume. `S3_*` is honoured at first install
 only, so adopting object storage later is a data migration rather than a config change.
+
+## Recordings are shared to their conversation
+
+Talk stores a recording under the recorder's own `<attachment folder>/Recording/<room
+token>/` and notifies *them* to decide whether to publish it. Until somebody clicks
+"Share to chat" the file is private to whoever pressed record — including the
+transcript. For an ops meeting that is the wrong owner: the record of the meeting
+belongs to the people who were in it.
+
+The `recording-share` service closes that gap. Every couple of minutes it shares
+finished recordings, read-only, to the one conversation they came from — never to a
+user, never to a public link, never to another room. It calls Talk's own
+`RecordingService::shareToChat()`, so the chat message is attributed to the file's
+owner and rendered as a recording rather than a generic file, and the owner's pending
+"share this?" notification is cleared.
+
+Set `RECORDING_AUTOSHARE=0` to turn it off and get Talk's stock behaviour back.
