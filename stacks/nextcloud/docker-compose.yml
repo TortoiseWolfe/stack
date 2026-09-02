@@ -47,6 +47,10 @@ configs:
     # Same rule: bump when the proxy script changes or the old one keeps running.
     name: ${STT_PROXY_CONFIG_NAME:-nextcloud_stt_proxy_1}
     file: ./scripts/stt-prompt-proxy.py
+  share_recordings_php:
+    # Same rule: bump when the script changes or the old one keeps running.
+    name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_1}
+    file: ./scripts/share-recordings.php
 
 volumes:
   localai_backends:
@@ -229,6 +233,66 @@ services:
       resources:
         limits:
           memory: ${MEM_LIMIT_TASKWORKER:-1G}
+
+  # A RECORDING NOBODY CAN REACH IS NOT A RECORDING.
+  #
+  # Talk stores a recording under the recorder's own <attachment folder>/Recording/
+  # <room token>/ and then notifies THEM to decide whether to publish it. The file
+  # is private until somebody clicks "Share to chat". That is deliberate upstream
+  # and sensible for a one-to-one call; for a co-op ops meeting it means the record
+  # of the meeting belongs to whoever happened to press the button.
+  #
+  # The 2026-09-01 ops meeting is why this exists: recording and transcript both
+  # completed, and both were unreachable to everyone but the recorder, who had no
+  # reason to know a second step existed. It read as a broken transcript pipeline.
+  # It was not -- it was working exactly as designed, and the design assumed a
+  # human would finish the job.
+  #
+  # This finishes it. Files under .../Recording/<token>/ are shared, read-only, to
+  # that one conversation and nothing else -- never a user share, never a public
+  # link, never another room. It calls Talk's own RecordingService::shareToChat(),
+  # so the chat message is attributed to the file's owner and tagged as a recording
+  # rather than a generic file, and the owner's pending notification is cleared.
+  #
+  # Set RECORDING_AUTOSHARE=0 to stop it without redeploying the stack.
+  #
+  # Waits for the install rather than racing it, because Swarm ignores depends_on
+  # ordering.
+  recording-share:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        until php /var/www/html/occ status 2>/dev/null | grep -q 'installed: true';
+        do echo '[recording-share] waiting for install'; sleep 10; done;
+        echo '[recording-share] watching, interval ${RECORDING_SHARE_INTERVAL:-120}s';
+        while true; do
+        php /config/share-recordings.php --apply || echo '[recording-share] run failed';
+        sleep ${RECORDING_SHARE_INTERVAL:-120};
+        done
+    user: www-data
+    working_dir: /var/www/html
+    volumes:
+      - nextcloud_html:/var/www/html
+    configs:
+      - source: share_recordings_php
+        target: /config/share-recordings.php
+        mode: 0444
+    environment:
+      TZ: ${TZ:-America/New_York}
+      RECORDING_AUTOSHARE: ${RECORDING_AUTOSHARE:-1}
+      # Don't publish a file that is still being written. The recording upload and
+      # the transcript are written at different times; this is the margin.
+      STT_SHARE_MIN_AGE: ${STT_SHARE_MIN_AGE:-120}
+    networks:
+      - nextcloud_internal
+    depends_on:
+      - app
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_RECORDING_SHARE:-256M}
 
   # Installs the apps. Without it a deploy yields a stock Nextcloud: the `talk`
   # service is only the signaling backend, not the Talk app.
