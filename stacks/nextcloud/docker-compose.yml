@@ -51,6 +51,10 @@ configs:
     # Same rule: bump when the script changes or the old one keeps running.
     name: ${SHARE_RECORDINGS_CONFIG_NAME:-nextcloud_share_recordings_2}
     file: ./scripts/share-recordings.php
+  prune_recordings_php:
+    # Same rule again.
+    name: ${PRUNE_RECORDINGS_CONFIG_NAME:-nextcloud_prune_recordings_1}
+    file: ./scripts/prune-recordings.php
 
 volumes:
   localai_backends:
@@ -267,7 +271,8 @@ services:
         do echo '[recording-share] waiting for install'; sleep 10; done;
         echo '[recording-share] watching, interval ${RECORDING_SHARE_INTERVAL:-120}s';
         while true; do
-        php /config/share-recordings.php --apply || echo '[recording-share] run failed';
+        php /config/share-recordings.php --apply || echo '[recording-share] share failed';
+        php /config/prune-recordings.php --apply || echo '[recording-share] prune failed';
         sleep ${RECORDING_SHARE_INTERVAL:-120};
         done
     user: www-data
@@ -278,12 +283,29 @@ services:
       - source: share_recordings_php
         target: /config/share-recordings.php
         mode: 0444
+      - source: prune_recordings_php
+        target: /config/prune-recordings.php
+        mode: 0444
     environment:
       TZ: ${TZ:-America/New_York}
       RECORDING_AUTOSHARE: ${RECORDING_AUTOSHARE:-1}
       # Don't publish a file that is still being written. The recording upload and
       # the transcript are written at different times; this is the margin.
       STT_SHARE_MIN_AGE: ${STT_SHARE_MIN_AGE:-120}
+      # Deleting the video once its transcript exists. OFF unless set to 1: this
+      # removes a member's file, so switching it on is a decision rather than a
+      # side effect of deploying. `--apply` is passed above, so RECORDING_PRUNE is
+      # the only thing standing between a deploy and a deletion.
+      RECORDING_PRUNE: ${RECORDING_PRUNE:-0}
+      # A real hour of meeting produced 44,074 characters. Production also holds
+      # transcripts of 47 and 66 bytes from failed and test runs, and deleting a
+      # recording on the strength of one of those would be silent data loss.
+      TRANSCRIPT_MIN_BYTES: ${TRANSCRIPT_MIN_BYTES:-2048}
+      # Transcription of a one-hour call takes about 7 minutes. A day is well past
+      # any transcript still being written.
+      RECORDING_PRUNE_MIN_AGE: ${RECORDING_PRUNE_MIN_AGE:-86400}
+      # Room tokens whose recordings are never pruned. Greg wants webinars kept.
+      RECORDING_KEEP_ROOMS: ${RECORDING_KEEP_ROOMS:-}
     networks:
       - nextcloud_internal
     depends_on:
