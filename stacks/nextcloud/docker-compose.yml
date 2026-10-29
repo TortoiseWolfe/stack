@@ -102,6 +102,11 @@ services:
 
   app:
     image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    # The image ships no php.ini, so PHP runs on development defaults.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - cp /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini && exec /entrypoint.sh apache2-foreground
     environment:
       POSTGRES_HOST: db
       POSTGRES_DB: ${DB_NAME:-nextcloud}
