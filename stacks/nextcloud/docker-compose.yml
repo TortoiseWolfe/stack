@@ -570,6 +570,12 @@ services:
       LOCALAI_UPLOAD_LIMIT: ${LOCALAI_UPLOAD_LIMIT:-512}
       LOCALAI_MODELS_PATH: /models
       LOCALAI_LOG_LEVEL: ${LOCALAI_LOG_LEVEL:-info}
+      LOCALAI_WATCHDOG_IDLE: "true"
+      LOCALAI_WATCHDOG_IDLE_TIMEOUT: ${LOCALAI_WATCHDOG_IDLE_TIMEOUT:-5m}
+      LOCALAI_SINGLE_ACTIVE_BACKEND: "true"
+      GOMEMLIMIT: 1GiB
+      MALLOC_ARENA_MAX: "2"
+      MALLOC_TRIM_THRESHOLD_: "131072"
       TZ: ${TZ:-America/New_York}
     # LocalAI v4 ships NO backends in the image: /models holds the model
     # definition, /backends holds the runtime that executes it, and the image has
@@ -603,8 +609,10 @@ services:
           # 230 MB of samples before buffers. Measured peak 2,270 MB for a
           # one-hour recording on 2026-09-01, where a 2 GB limit was OOM-killed
           # with nothing but "error reading from server: EOF" to show for it.
-          # 4 GB covers the two-hour planning ceiling.
-          memory: ${MEM_LIMIT_LOCALAI:-4G}
+          # The idle watchdog unloads the model after the last job, so the
+          # container drops to a few hundred MB between recordings. Raise this
+          # for recordings much longer than an hour.
+          memory: ${MEM_LIMIT_LOCALAI:-2560M}
 
   # Adds a vocabulary prompt to Nextcloud's speech-to-text requests.
   #
