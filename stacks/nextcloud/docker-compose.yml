@@ -576,6 +576,10 @@ services:
       GOMEMLIMIT: 1GiB
       MALLOC_ARENA_MAX: "2"
       MALLOC_TRIM_THRESHOLD_: "131072"
+      # Banded attention and a tiled front end for the speaker backend: they keep a
+      # one-hour recording under the 2560M cap (cd-nextcloud docker/localai/README.md).
+      PARAKEET_ATT_CONTEXT: "128"
+      PARAKEET_SUBSAMPLING_TILE: "1024"
       TZ: ${TZ:-America/New_York}
     # LocalAI v4 ships NO backends in the image: /models holds the model
     # definition, /backends holds the runtime that executes it, and the image has
