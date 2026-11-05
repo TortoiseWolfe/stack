@@ -134,8 +134,10 @@ services:
     volumes:
       - nextcloud_html:/var/www/html
     networks:
-      - traefik_net
-      - nextcloud_internal
+      traefik_net:
+      nextcloud_internal:
+        aliases:
+          - nextcloud-web
     depends_on:
       - db
       - redis
@@ -311,8 +313,10 @@ services:
       # resolve ("failed to lookup address information"); REDIS_URL overrides it.
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       # Reach Nextcloud directly instead of through Traefik, which hides the
-      # push server's address from the trusted-proxy check.
-      NEXTCLOUD_URL: http://app
+      # push server's address from the trusted-proxy check. The alias exists
+      # only on this stack's private network; the short name "app" also lives on
+      # traefik_net, where other tenants' services answer to it.
+      NEXTCLOUD_URL: http://nextcloud-web
       OVERWRITEHOST: ${DOMAIN:?DOMAIN not set}
       OVERWRITEPROTOCOL: https
       OVERWRITECLIURL: https://${DOMAIN}
