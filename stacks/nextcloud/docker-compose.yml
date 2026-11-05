@@ -303,6 +303,14 @@ services:
     command: ["/var/www/html/config/config.php"]
     environment:
       PORT: "7867"
+      # The image's config files read these at parse time. Without them the
+      # service starts, then cannot find Redis and answers every request 500.
+      REDIS_HOST: redis
+      REDIS_HOST_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
+      OVERWRITEHOST: ${DOMAIN:?DOMAIN not set}
+      OVERWRITEPROTOCOL: https
+      OVERWRITECLIURL: https://${DOMAIN}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:?TRUSTED_PROXIES not set}
     volumes:
       - nextcloud_html:/var/www/html:ro
     networks:
