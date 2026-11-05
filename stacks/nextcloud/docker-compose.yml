@@ -307,6 +307,9 @@ services:
       # service starts, then cannot find Redis and answers every request 500.
       REDIS_HOST: redis
       REDIS_HOST_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD not set}
+      # config.php stores the host as tcp://redis, which this binary cannot
+      # resolve ("failed to lookup address information"); REDIS_URL overrides it.
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       OVERWRITEHOST: ${DOMAIN:?DOMAIN not set}
       OVERWRITEPROTOCOL: https
       OVERWRITECLIURL: https://${DOMAIN}
