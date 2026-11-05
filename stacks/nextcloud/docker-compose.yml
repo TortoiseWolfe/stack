@@ -292,6 +292,42 @@ services:
         - "traefik.http.routers.${INSTANCE_NAME}-board.middlewares=${INSTANCE_NAME}-security@swarm,${INSTANCE_NAME}-board-strip@swarm"
         - "traefik.http.services.${INSTANCE_NAME}-board.loadbalancer.server.port=3002"
 
+  # notify_push: tells browsers when files or documents change so the Text app
+  # stops polling. Off until PUSH_REPLICAS=1, because it needs the notify_push
+  # app installed first (EXTRA_APPS) and `occ notify_push:setup` run once.
+  # The binary is the x86_64 build; the app downloads it to custom_apps.
+  notify_push:
+    image: nextcloud:${NEXTCLOUD_VERSION:?NEXTCLOUD_VERSION not set}
+    user: www-data
+    entrypoint: ["/var/www/html/custom_apps/notify_push/bin/x86_64/notify_push"]
+    command: ["/var/www/html/config/config.php"]
+    environment:
+      PORT: "7867"
+    volumes:
+      - nextcloud_html:/var/www/html:ro
+    networks:
+      - traefik_net
+      - nextcloud_internal
+    depends_on:
+      - app
+    deploy:
+      <<: *deploy-stateless
+      replicas: ${PUSH_REPLICAS:-0}
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_PUSH:-128M}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}-push.rule=Host(`${DOMAIN}`) && PathPrefix(`/push`)"
+        - "traefik.http.routers.${INSTANCE_NAME}-push.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}-push.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}-push.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.routers.${INSTANCE_NAME}-push.priority=100"
+        - "traefik.http.middlewares.${INSTANCE_NAME}-push-strip.stripprefix.prefixes=/push"
+        - "traefik.http.routers.${INSTANCE_NAME}-push.middlewares=${INSTANCE_NAME}-security@swarm,${INSTANCE_NAME}-push-strip@swarm"
+        - "traefik.http.services.${INSTANCE_NAME}-push.loadbalancer.server.port=7867"
+
   # Signaling and HPB only; relaying is the turn stack's job.
   talk:
     image: ${TALK_IMAGE:-strangewill/aio-talk-standalone}:${TALK_VERSION:-20260428}
