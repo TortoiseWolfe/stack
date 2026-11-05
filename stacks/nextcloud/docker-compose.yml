@@ -44,6 +44,11 @@ configs:
     name: ${INIT_CONFIG_NAME:-nextcloud_init_1}
     file: ./scripts/init.sh
 
+  nginx_conf:
+    # Bump NGINX_CONFIG_NAME when nginx.conf changes; Swarm configs are immutable.
+    name: ${NGINX_CONFIG_NAME:-nextcloud_nginx_1}
+    file: ./scripts/nginx.default.conf.template
+
 volumes:
   nextcloud_html:
     driver: local
@@ -136,10 +141,9 @@ services:
     volumes:
       - nextcloud_html:/var/www/html
     networks:
-      traefik_net:
       nextcloud_internal:
         aliases:
-          - ${INSTANCE_NAME:?INSTANCE_NAME not set}-web
+          - ${INSTANCE_NAME:?INSTANCE_NAME not set}-php
     depends_on:
       - db
       - redis
@@ -148,6 +152,33 @@ services:
       resources:
         limits:
           memory: ${MEM_LIMIT_APP:-2G}
+
+  # Serves static files and hands PHP to app (php-fpm, port 9000). Takes over
+  # app's Traefik labels; the `-web` alias is what notify_push calls.
+  nginx:
+    image: nginx:${NGINX_VERSION:-1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236}
+    configs:
+      - source: nginx_conf
+        target: /etc/nginx/templates/default.conf.template
+        mode: 0444
+    environment:
+      # Instance-named alias of app, not the short name "app": traefik_net also
+      # carries other tenants' services called app.
+      NEXTCLOUD_PHP_HOST: ${INSTANCE_NAME:?INSTANCE_NAME not set}-php
+    volumes:
+      - nextcloud_html:/var/www/html:ro
+    networks:
+      traefik_net:
+      nextcloud_internal:
+        aliases:
+          - ${INSTANCE_NAME:?INSTANCE_NAME not set}-web
+    depends_on:
+      - app
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_NGINX:-256M}
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
