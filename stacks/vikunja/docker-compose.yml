@@ -73,6 +73,12 @@ services:
     networks:
       - traefik_net
       - vikunja_internal
+    healthcheck:
+      test: ["CMD", "/app/vikunja/vikunja", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       <<: *deploy-defaults
       resources:
