@@ -19,9 +19,12 @@ open sign-up.
 
 ## Files and permissions
 
-The image runs as uid 1000 and will not chown its volume. The named volume
-`vikunja_files` starts root-owned on first use, so if uploads fail with a permission
-error, run `vikunja doctor` in the `app` container and fix the volume owner as it says.
+The image defaults to uid 1000 and cannot chown its volume. Docker creates the named
+volume `vikunja_files` root-owned, and on 2.8.0 the app then exits at start with
+"permission denied" (reproduced in a test swarm), so the `app` service sets
+`user: "0:0"`. The image has no shell, so there is no way to fix the owner from inside
+it. If William would rather not run it as root, the volume's owner has to be set to
+1000 on the host first.
 
 ## Upgrade
 
@@ -39,8 +42,8 @@ pg_dump -U vikunja vikunja
 
 run inside the `db` container.
 
-## No healthcheck on `app`
+## Healthcheck on `app`
 
-The upstream image has no shell or `wget`, so a container healthcheck cannot be
-written without adding tooling. Traefik only routes once the container is up; check
-`https://<VIKUNJA_DOMAIN>/api/v1/info` after a deploy.
+The upstream image has no shell, `curl` or `wget`, so the check runs the binary's own
+`vikunja healthcheck` command. After a deploy, `https://<VIKUNJA_DOMAIN>/api/v1/info`
+should answer.

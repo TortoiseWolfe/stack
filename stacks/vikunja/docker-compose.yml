@@ -30,7 +30,7 @@ volumes:
 
 services:
   db:
-    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    image: postgres:${POSTGRES_VERSION:-17.12-alpine@sha256:34261f594522cf41dfcb76aefd42b9d201098b0e6b23c9c68733f169e4218b6f}
     environment:
       POSTGRES_USER: vikunja
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
@@ -53,6 +53,9 @@ services:
 
   app:
     image: vikunja/vikunja:${VIKUNJA_VERSION:?VIKUNJA_VERSION not set}
+    # The image defaults to uid 1000 and cannot write a new named volume, which
+    # Docker creates root-owned; it exits at start with "permission denied".
+    user: "0:0"
     environment:
       VIKUNJA_SERVICE_PUBLICURL: https://${VIKUNJA_DOMAIN:?VIKUNJA_DOMAIN not set}/
       VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SECRET:?VIKUNJA_SECRET not set}
