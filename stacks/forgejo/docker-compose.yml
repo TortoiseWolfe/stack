@@ -30,7 +30,7 @@ volumes:
 
 services:
   db:
-    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    image: postgres:${POSTGRES_VERSION:-17.12-alpine@sha256:34261f594522cf41dfcb76aefd42b9d201098b0e6b23c9c68733f169e4218b6f}
     environment:
       POSTGRES_USER: forgejo
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
