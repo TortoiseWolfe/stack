@@ -51,11 +51,28 @@ services:
         limits:
           memory: ${MEM_LIMIT_DB:-256M}
 
+  # One-shot: Vikunja runs as uid 1000 and Docker creates a new named volume
+  # root-owned, so hand the files volume to uid 1000 (what Vikunja's docs ask for),
+  # then exit and stay down. The app restarts until this has run, so first deploy
+  # may show one failed app start.
+  files-init:
+    image: busybox:${BUSYBOX_VERSION:-1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec}
+    command: ["chown", "-R", "1000", "/app/vikunja/files"]
+    volumes:
+      - vikunja_files:/app/vikunja/files
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none
+      placement:
+        constraints:
+          - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+      resources:
+        limits:
+          memory: 16M
+
   app:
     image: vikunja/vikunja:${VIKUNJA_VERSION:?VIKUNJA_VERSION not set}
-    # The image defaults to uid 1000 and cannot write a new named volume, which
-    # Docker creates root-owned; it exits at start with "permission denied".
-    user: "0:0"
     environment:
       VIKUNJA_SERVICE_PUBLICURL: https://${VIKUNJA_DOMAIN:?VIKUNJA_DOMAIN not set}/
       VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SECRET:?VIKUNJA_SECRET not set}

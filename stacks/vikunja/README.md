@@ -19,12 +19,14 @@ open sign-up.
 
 ## Files and permissions
 
-The image defaults to uid 1000 and cannot chown its volume. Docker creates the named
+The app runs as uid 1000 and must be able to write its files volume (Vikunja's docs say
+to chown the files folder to 1000 before the first start). Docker creates the named
 volume `vikunja_files` root-owned, and on 2.8.0 the app then exits at start with
-"permission denied" (reproduced in a test swarm), so the `app` service sets
-`user: "0:0"`. The image has no shell, so there is no way to fix the owner from inside
-it. If William would rather not run it as root, the volume's owner has to be set to
-1000 on the host first.
+"permission denied" (reproduced in a test swarm). The one-shot `files-init` service
+runs `chown -R 1000` on the volume and stays down (`restart_policy: condition: none`),
+the same pattern as the bigcapital `migration` service. The app keeps running as
+uid 1000. On the very first deploy the app may fail once and restart until the
+init has run.
 
 ## Upgrade
 
