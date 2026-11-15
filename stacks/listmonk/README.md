@@ -42,3 +42,20 @@ Bounces need the provider to call back. For SendGrid, turn on Enable bounce proc
 Enable bounce webhooks and Enable SendGrid under Settings, Bounces. Paste the signed
 Event Webhook's verification key into SendGrid Key, and point the webhook at
 `https://<LISTMONK_DOMAIN>/webhooks/service/sendgrid`.
+
+## Scripts
+
+A script never signs in as the admin. Under Users, Roles, make a role with only
+`lists:get_all`, `subscribers:get_all`, `subscribers:manage`, `campaigns:get_all`,
+`campaigns:manage_all` and `templates:get`. Then make a user of type API with that role.
+The token shows once, so save it where the script reads it. The script sends
+`Authorization: token USER:TOKEN`. Tried on v6.2.0: `/api/lists` answers 200 and
+`/api/settings` answers 403.
+
+## Unsubscribe check
+
+Do this before a client's first send. Settings, Privacy, Include `List-Unsubscribe`
+header must be on. Send one campaign to a test address and read the message headers:
+`List-Unsubscribe` holds a link and `List-Unsubscribe-Post` reads
+`List-Unsubscribe=One-Click`. Sending that body with POST to the link unsubscribes the
+address.
