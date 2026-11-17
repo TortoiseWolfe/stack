@@ -11,11 +11,11 @@ made from inside the `app` container, which has the `vikunja` binary:
 
 ```
 vikunja user create -u <name> -e <email>
-vikunja user set-admin <name>
 ```
 
-The first command asks for the password. Turn registration on only if the trial needs
-open sign-up.
+It asks for the password. `user set-admin` refuses without the licensed admin-panel
+feature, so every account is an ordinary one. Turn registration on only if the trial
+needs open sign-up.
 
 ## Files and permissions
 
