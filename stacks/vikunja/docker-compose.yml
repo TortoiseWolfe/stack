@@ -1,0 +1,114 @@
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 0
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  vikunja_internal:
+    driver: overlay
+    attachable: false
+
+volumes:
+  vikunja_db:
+    driver: local
+  vikunja_files:
+    driver: local
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-17.12-alpine@sha256:34261f594522cf41dfcb76aefd42b9d201098b0e6b23c9c68733f169e4218b6f}
+    environment:
+      POSTGRES_USER: vikunja
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      POSTGRES_DB: vikunja
+    volumes:
+      - vikunja_db:/var/lib/postgresql/data
+    networks:
+      - vikunja_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vikunja -d vikunja"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-256M}
+
+  # One-shot: Vikunja runs as uid 1000 and Docker creates a new named volume
+  # root-owned, so hand the files volume to uid 1000 (what Vikunja's docs ask for),
+  # then exit and stay down. The app restarts until this has run, so first deploy
+  # may show one failed app start.
+  files-init:
+    image: busybox:${BUSYBOX_VERSION:-1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec}
+    command: ["chown", "-R", "1000", "/app/vikunja/files"]
+    volumes:
+      - vikunja_files:/app/vikunja/files
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none
+      placement:
+        constraints:
+          - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+      resources:
+        limits:
+          memory: 16M
+
+  app:
+    image: vikunja/vikunja:${VIKUNJA_VERSION:?VIKUNJA_VERSION not set}
+    environment:
+      VIKUNJA_SERVICE_PUBLICURL: https://${VIKUNJA_DOMAIN:?VIKUNJA_DOMAIN not set}/
+      VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SECRET:?VIKUNJA_SECRET not set}
+      VIKUNJA_SERVICE_ENABLEREGISTRATION: ${ENABLE_REGISTRATION:-false}
+      VIKUNJA_DATABASE_TYPE: postgres
+      VIKUNJA_DATABASE_HOST: db
+      VIKUNJA_DATABASE_USER: vikunja
+      VIKUNJA_DATABASE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      VIKUNJA_DATABASE_DATABASE: vikunja
+      VIKUNJA_MAILER_ENABLED: ${MAIL_ENABLED:-false}
+      VIKUNJA_MAILER_HOST: ${MAIL_HOST:-}
+      VIKUNJA_MAILER_PORT: ${MAIL_PORT:-587}
+      VIKUNJA_MAILER_USERNAME: ${MAIL_USERNAME:-}
+      VIKUNJA_MAILER_PASSWORD: ${MAIL_PASSWORD:-}
+      VIKUNJA_MAILER_FROMEMAIL: ${MAIL_FROM_ADDRESS:-}
+    volumes:
+      - vikunja_files:/app/vikunja/files
+    networks:
+      - traefik_net
+      - vikunja_internal
+    healthcheck:
+      test: ["CMD", "/app/vikunja/vikunja", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_APP:-256M}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${VIKUNJA_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=3456"
