@@ -1,0 +1,101 @@
+x-deploy-defaults: &deploy-defaults
+  replicas: 1
+  update_config:
+    order: stop-first
+    parallelism: 1
+    delay: 5s
+    failure_action: rollback
+    monitor: 60s
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 0
+  placement:
+    constraints:
+      - ${PLACEMENT_CONSTRAINT:-node.role == manager}
+
+networks:
+  traefik_net:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_net}
+  forgejo_internal:
+    driver: overlay
+    attachable: false
+
+volumes:
+  forgejo_db:
+    driver: local
+  forgejo_data:
+    driver: local
+
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION:-17.12-alpine@sha256:34261f594522cf41dfcb76aefd42b9d201098b0e6b23c9c68733f169e4218b6f}
+    environment:
+      POSTGRES_USER: forgejo
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      POSTGRES_DB: forgejo
+    volumes:
+      - forgejo_db:/var/lib/postgresql/data
+    networks:
+      - forgejo_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgejo -d forgejo"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_DB:-256M}
+
+  app:
+    image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION:?FORGEJO_VERSION not set}
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN:?FORGEJO_DOMAIN not set}
+      FORGEJO__server__ROOT_URL: https://${FORGEJO_DOMAIN}/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__SECRET_KEY: ${FORGEJO_SECRET_KEY:?FORGEJO_SECRET_KEY not set}
+      FORGEJO__service__DISABLE_REGISTRATION: ${DISABLE_REGISTRATION:-true}
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: db:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: forgejo
+      FORGEJO__database__PASSWD: ${DB_PASSWORD:?DB_PASSWORD not set}
+      FORGEJO__mailer__ENABLED: ${MAIL_ENABLED:-false}
+      FORGEJO__mailer__PROTOCOL: ${MAIL_PROTOCOL:-smtp+starttls}
+      FORGEJO__mailer__SMTP_ADDR: ${MAIL_HOST:-}
+      FORGEJO__mailer__SMTP_PORT: ${MAIL_PORT:-587}
+      FORGEJO__mailer__USER: ${MAIL_USERNAME:-}
+      FORGEJO__mailer__PASSWD: ${MAIL_PASSWORD:-}
+      FORGEJO__mailer__FROM: ${MAIL_FROM_ADDRESS:-}
+    volumes:
+      - forgejo_data:/data
+    networks:
+      - traefik_net
+      - forgejo_internal
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:3000/api/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      <<: *deploy-defaults
+      resources:
+        limits:
+          memory: ${MEM_LIMIT_APP:-512M}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-traefik_net}"
+        - "traefik.http.routers.${INSTANCE_NAME:?INSTANCE_NAME not set}.rule=Host(`${FORGEJO_DOMAIN}`)"
+        - "traefik.http.routers.${INSTANCE_NAME}.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls=true"
+        - "traefik.http.routers.${INSTANCE_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-le}"
+        - "traefik.http.services.${INSTANCE_NAME}.loadbalancer.server.port=3000"
